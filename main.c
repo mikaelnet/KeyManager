@@ -12,6 +12,9 @@
 #include <util/delay.h>
 #include <avr/pgmspace.h>
 
+extern void hasUsbReset();
+
+#include "usbconfig.h"
 #include "usbdrv/usbdrv.h"
 #include "usbdrv/oddebug.h"        /* This is also an example for using debug macros */
 
@@ -119,6 +122,39 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 		}
 	}
 	return 0;
+}
+
+#define i_abs(x) ((x) > 0 ? (x) : (-x))
+void hadUsbReset() 
+{
+	int frameLength;
+	int targetLength = (unsigned)(1499 * (double)F_CPU / 10.5e6 + 0.5);
+	int bestDeviation = 9999;
+	uchar trialCal;
+	uchar bestCal = OSCCAL;
+
+	// do a binary search in regions 0-127 and 128-255 to get optimum OSCCAL
+	for (int region = 0 ; region <= 1 ; region ++) {
+		frameLength = 0;
+		trialCal = (region == 0) ? 0 : 128;
+
+		for (int step = 64; step > 0; step >>= 1) {
+			if (frameLength < targetLength)	// true for initial iteration
+				trialCal += step;
+			else
+				trialCal -= step;
+
+			OSCCAL = trialCal;
+			frameLength = usbMeasureFrameLength();
+
+			if (i_abs(frameLength-targetLength) < bestDeviation) {
+				bestCal = trialCal;
+				bestDeviation = i_abs(frameLength - targetLength);
+			}
+		}
+	}
+
+	OSCCAL = bestCal;
 }
 
 void buildReport(char ch) {
