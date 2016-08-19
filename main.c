@@ -3,7 +3,7 @@
  *
  * Created: 2016-07-28 23:23:35
  * Author : mikael
- */ 
+ */
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -90,15 +90,10 @@ static uchar idleRate; // repeat rate for keyboards
 #define STATE_SEND 1
 #define STATE_DONE 0
 
-static uchar messageState = STATE_DONE;
-static uchar messageBuffer[MSG_BUFFER_SIZE] = "";
-static uchar messagePtr = 0;
-static uchar messageCharNext = 1;
-
 #define MOD_SHIFT_LEFT (1<<1)
 
 
-usbMsgLen_t usbFunctionSetup(uchar data[8]) 
+usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
 	usbRequest_t *rq = (void *)data;
 
@@ -127,7 +122,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 }
 
 #define i_abs(x) ((x) > 0 ? (x) : (-x))
-void hadUsbReset() 
+void hadUsbReset()
 {
 	int frameLength;
 	int targetLength = (unsigned)(1499 * (double)F_CPU / 10.5e6 + 0.5);
@@ -177,7 +172,7 @@ void buildReport(char ch) {
 	else {
 		keyboard_report.modifier = 0;
 		uint8_t keyCode = 0;
-		
+
 		switch (ch) {
 			case '.':
 				keyCode = 0x37; break;
@@ -201,6 +196,19 @@ void buildReport(char ch) {
 #define STATE_SEND_KEY 1
 #define STATE_RELEASE_KEY 2
 #define STATE_TOGGLE 3
+#define STATE_SEND_NEXT 4
+
+/*const char pwd0[] PROGMEM = "Password1\n";
+const char pwd1[] PROGMEM = "Password1\n";
+const char pwd2[] PROGMEM = "Password2\n";
+const char pwd3[] PROGMEM = "Password3\n";
+const char pwd4[] PROGMEM = "Password4\n";
+const char pwd5[] PROGMEM = "Password5\n";
+const char pwd6[] PROGMEM = "Password6\n";
+const char pwd7[] PROGMEM = "Password7\n";
+const PGM_P passwords[8] PROGMEM = {
+    pwd0, pwd1, pwd2, pwd3, pwd4, pwd5, pwd6, pwd7
+};*/
 
 struct cRGB led[8];
 uint8_t ledIndex = 0;
@@ -208,14 +216,26 @@ void setup() {
 	DDRB = _BV(PB1) | _BV(PB4);	// RED LED + WS2812 LED
 	PORTB = _BV(PB1);
 
-	led[0].r = 0x80; led[0].g = 0x00; led[0].b = 0x00;
-	led[1].r = 0x00; led[1].g = 0x80; led[1].b = 0x00;
-	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0x80;
-	led[3].r = 0x80; led[3].g = 0x80; led[3].b = 0x00;
-	led[4].r = 0x80; led[4].g = 0x00; led[4].b = 0x80;
-	led[5].r = 0x00; led[5].g = 0x80; led[5].b = 0x80;
-	led[6].r = 0x80; led[6].g = 0x80; led[6].b = 0x80;
+	led[0].r = 0xFF; led[0].g = 0x00; led[0].b = 0x00;
+	led[1].r = 0x00; led[1].g = 0xFF; led[1].b = 0x00;
+	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0xFF;
+	led[3].r = 0xFF; led[3].g = 0xFF; led[3].b = 0x00;
+	led[4].r = 0xFF; led[4].g = 0x00; led[4].b = 0xFF;
+	led[5].r = 0x00; led[5].g = 0xFF; led[5].b = 0xFF;
+	led[6].r = 0xFF; led[6].g = 0xFF; led[6].b = 0xFF;
 	led[7].r = 0x00; led[7].g = 0x00; led[7].b = 0x00;
+
+    ws2812_setleds(&led[ledIndex], 1);
+
+    TCCR1 = 0x0F;   // Divide 16.5MHz in 16384 -> 1007 ticks/second
+    TCNT1 = 155;
+    TIMSK |= _BV(TOIE1);
+}
+
+volatile uint16_t global_timer; // Counts upwards once every 0.1s
+ISR(TIMER1_OVF_vect) {
+    global_timer ++;
+    TCNT1 = 155;
 }
 
 int main(void)
@@ -236,37 +256,51 @@ int main(void)
 	sei();
 
     uint8_t state = STATE_WAIT;
-	uint8_t button_release_counter = 0;
-	
-	uint16_t button_counter = 0;
-	uint8_t lastState = !(PINB & _BV(PB3)), ledState;
-    while (1) 
+
+	uint8_t lastState = !(PINB & _BV(PB3)), btnState;
+	uint8_t timer_start = global_timer, timeout;
+
+    char buf[] = "Password1\n";
+    //PGM_P p;
+    char *bufPtr = buf;
+
+    while (1)
     {
 		wdt_reset();
 		usbPoll();
 
-		ledState = !(PINB & _BV(PB3));
-		if (ledState != lastState) {
-			if (ledState) {
-				// Button is just pressed
-			}
-			else {
-				// Button is released
-				if (button_counter > 250) {
-					state = STATE_SEND_KEY;
-				}
-				else if (button_counter > 10) {	// De-bounce
-					ledIndex = (ledIndex+1) & 0x07;
-					ws2812_setleds(&led[ledIndex], 1);
-				}
-			}
-			button_counter = 0;
-		}
-		else if (button_counter < 0xFFFF) {
-			button_counter ++;
-		}
-
-		lastState = state;
+		btnState = !(PINB & _BV(PB3));
+        if (state == STATE_WAIT) {
+		    if (btnState != lastState) {
+			    if (btnState) {
+				    timer_start = global_timer;
+			    }
+			    else {
+				    // Button is released
+                    timeout = global_timer - timer_start;
+                    if (timeout > 10 && timeout < 50) {
+                        //state = STATE_SEND_KEY;
+                    }
+                    else if (timeout > 1 && timeout <= 10) {
+                        ledIndex = (ledIndex+1) & 0x07;
+                        ws2812_setleds(&led[ledIndex], 1);
+                    }
+			    }
+		    }
+            else {
+                timeout = global_timer - timer_start;
+                if (timeout == 10) {
+                    //memcpy_P(&p, &passwords[ledIndex], sizeof(PGM_P));
+                    //strcpy_P(buf, p);
+                    buf[8] = '0' + ledIndex;
+                    bufPtr = buf;
+                    state = STATE_SEND_KEY;
+                }
+            }
+        }
+        else
+            timer_start = global_timer;
+		lastState = btnState;
 
 		/*if ( !(PINB & _BV(PB3)) ) {
 			if (state == STATE_WAIT && button_release_counter == 255)
@@ -281,9 +315,18 @@ int main(void)
 		if (usbInterruptIsReady() && state != STATE_WAIT) {
 			switch (state) {
 				case STATE_SEND_KEY:
-					buildReport('A' + ledIndex);
-					state = STATE_RELEASE_KEY;
+					buildReport(*bufPtr++);
+					//state = STATE_RELEASE_KEY;
+                    state = STATE_SEND_NEXT;
 					break;
+
+                case STATE_SEND_NEXT:
+                    buildReport(0);
+                    if (*bufPtr == 0)
+                        state = STATE_WAIT;
+                    else
+                        state = STATE_SEND_KEY;
+                    break;
 
 				case STATE_RELEASE_KEY:
 					buildReport(0);
