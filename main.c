@@ -12,11 +12,15 @@
 #include <util/delay.h>
 #include <avr/pgmspace.h>
 
+#include <stdlib.h>
+
 extern void hasUsbReset();
 
 #include "usbconfig.h"
 #include "usbdrv/usbdrv.h"
 #include "usbdrv/oddebug.h"        /* This is also an example for using debug macros */
+
+#include "ws2812/ws2812.h"
 
 #define PASS_LENGTH 10 // password length for generated password
 #define SEND_ENTER 0 // define to 1 if you want to send ENTER after password
@@ -199,11 +203,20 @@ void buildReport(char ch) {
 #define STATE_SEND_KEY 1
 #define STATE_RELEASE_KEY 2
 
+struct cRGB led[1];
 
 int main(void)
 {
 	DDRB = _BV(PB1) | _BV(PB4);	// RED LED + WS2812 LED
 	PORTB = _BV(PB1);
+
+	for (int i=0 ; i < 20 ; i ++) {
+		led[0].r = rand() & 0xFF;
+		led[0].g = rand() & 0xFF;
+		led[0].b = rand() & 0xFF;
+		ws2812_setleds(led, 1);
+		_delay_ms(500);
+	}
 
 	wdt_enable(WDTO_1S);
 	usbInit();
