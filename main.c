@@ -12,8 +12,6 @@
 #include <util/delay.h>
 #include <avr/pgmspace.h>
 
-#include <stdlib.h>
-
 extern void hasUsbReset();
 
 #include "usbconfig.h"
@@ -202,21 +200,27 @@ void buildReport(char ch) {
 #define STATE_WAIT 0
 #define STATE_SEND_KEY 1
 #define STATE_RELEASE_KEY 2
+#define STATE_TOGGLE 3
 
-struct cRGB led[1];
-
-int main(void)
-{
+struct cRGB led[8];
+uint8_t ledIndex = 0;
+void setup() {
 	DDRB = _BV(PB1) | _BV(PB4);	// RED LED + WS2812 LED
 	PORTB = _BV(PB1);
 
-	for (int i=0 ; i < 20 ; i ++) {
-		led[0].r = rand() & 0xFF;
-		led[0].g = rand() & 0xFF;
-		led[0].b = rand() & 0xFF;
-		ws2812_setleds(led, 1);
-		_delay_ms(500);
-	}
+	led[0].r = 0x80; led[0].g = 0x00; led[0].b = 0x00;
+	led[1].r = 0x00; led[1].g = 0x80; led[1].b = 0x00;
+	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0x80;
+	led[3].r = 0x80; led[3].g = 0x80; led[3].b = 0x00;
+	led[4].r = 0x80; led[4].g = 0x00; led[4].b = 0x80;
+	led[5].r = 0x00; led[5].g = 0x80; led[5].b = 0x80;
+	led[6].r = 0x80; led[6].g = 0x80; led[6].b = 0x80;
+	led[7].r = 0x00; led[7].g = 0x00; led[7].b = 0x00;
+}
+
+int main(void)
+{
+	setup();
 
 	wdt_enable(WDTO_1S);
 	usbInit();
@@ -228,16 +232,43 @@ int main(void)
 	}
 	usbDeviceConnect();
 
+	PORTB &= ~_BV(PB1);
 	sei();
 
     uint8_t state = STATE_WAIT;
 	uint8_t button_release_counter = 0;
+	
+	uint16_t button_counter = 0;
+	uint8_t lastState = !(PINB & _BV(PB3)), ledState;
     while (1) 
     {
 		wdt_reset();
 		usbPoll();
 
-		if ( !(PINB & _BV(PB3)) ) {
+		ledState = !(PINB & _BV(PB3));
+		if (ledState != lastState) {
+			if (ledState) {
+				// Button is just pressed
+			}
+			else {
+				// Button is released
+				if (button_counter > 250) {
+					state = STATE_SEND_KEY;
+				}
+				else if (button_counter > 10) {	// De-bounce
+					ledIndex = (ledIndex+1) & 0x07;
+					ws2812_setleds(&led[ledIndex], 1);
+				}
+			}
+			button_counter = 0;
+		}
+		else if (button_counter < 0xFFFF) {
+			button_counter ++;
+		}
+
+		lastState = state;
+
+		/*if ( !(PINB & _BV(PB3)) ) {
 			if (state == STATE_WAIT && button_release_counter == 255)
 				state = STATE_SEND_KEY;
 
@@ -245,12 +276,12 @@ int main(void)
 		}
 
 		if (button_release_counter < 255)
-			button_release_counter ++;
+			button_release_counter ++;*/
 
 		if (usbInterruptIsReady() && state != STATE_WAIT) {
 			switch (state) {
 				case STATE_SEND_KEY:
-					buildReport('x');
+					buildReport('A' + ledIndex);
 					state = STATE_RELEASE_KEY;
 					break;
 
