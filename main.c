@@ -92,7 +92,6 @@ static uchar idleRate; // repeat rate for keyboards
 
 #define MOD_SHIFT_LEFT (1<<1)
 
-
 usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
 	usbRequest_t *rq = (void *)data;
@@ -101,7 +100,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 		switch(rq->bRequest) {
 			case USBRQ_HID_GET_REPORT:
 				// send "no keys pressed" if asked here
-				usbMsgPtr = (void *)&keyboard_report;
+				usbMsgPtr = (usbMsgPtr_t)&keyboard_report;  //was cast to void*
 				keyboard_report.modifier = 0;
 				keyboard_report.keycode[0] = 0;
 				return sizeof(keyboard_report);
@@ -110,7 +109,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 				return (rq->wLength.word == 1) ? USB_NO_MSG : 0;
 
 			case USBRQ_HID_GET_IDLE:
-				usbMsgPtr = &idleRate;
+				usbMsgPtr = (usbMsgPtr_t)&idleRate; //was no cast
 				return 1;
 
 			case USBRQ_HID_SET_IDLE:
@@ -195,8 +194,6 @@ void buildReport(char ch) {
 #define STATE_WAIT 0
 #define STATE_SEND_KEY 1
 #define STATE_RELEASE_KEY 2
-#define STATE_TOGGLE 3
-#define STATE_SEND_NEXT 4
 
 /*const char pwd0[] PROGMEM = "Password1\n";
 const char pwd1[] PROGMEM = "Password1\n";
@@ -216,13 +213,13 @@ void setup() {
 	DDRB = _BV(PB1) | _BV(PB4);	// RED LED + WS2812 LED
 	PORTB = _BV(PB1);
 
-	led[0].r = 0xFF; led[0].g = 0x00; led[0].b = 0x00;
-	led[1].r = 0x00; led[1].g = 0xFF; led[1].b = 0x00;
-	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0xFF;
-	led[3].r = 0xFF; led[3].g = 0xFF; led[3].b = 0x00;
-	led[4].r = 0xFF; led[4].g = 0x00; led[4].b = 0xFF;
-	led[5].r = 0x00; led[5].g = 0xFF; led[5].b = 0xFF;
-	led[6].r = 0xFF; led[6].g = 0xFF; led[6].b = 0xFF;
+	led[0].r = 0x1F; led[0].g = 0x00; led[0].b = 0x00;
+	led[1].r = 0x00; led[1].g = 0x1F; led[1].b = 0x00;
+	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0x1F;
+	led[3].r = 0x1F; led[3].g = 0x1F; led[3].b = 0x00;
+	led[4].r = 0x1F; led[4].g = 0x00; led[4].b = 0x1F;
+	led[5].r = 0x00; led[5].g = 0x1F; led[5].b = 0x1F;
+	led[6].r = 0x1F; led[6].g = 0x1F; led[6].b = 0x1F;
 	led[7].r = 0x00; led[7].g = 0x00; led[7].b = 0x00;
 
     ws2812_setleds(&led[ledIndex], 1);
@@ -262,7 +259,7 @@ int main(void)
 
     char buf[] = "Password1\n";
     //PGM_P p;
-    char *bufPtr = buf;
+    char *bufPtr = NULL;
 
     while (1)
     {
@@ -270,7 +267,7 @@ int main(void)
 		usbPoll();
 
 		btnState = !(PINB & _BV(PB3));
-        if (state == STATE_WAIT) {
+        if (state == STATE_WAIT && bufPtr == NULL) {
 		    if (btnState != lastState) {
 			    if (btnState) {
 				    timer_start = global_timer;
@@ -283,11 +280,13 @@ int main(void)
                     }
                     else if (timeout > 1 && timeout <= 10) {
                         ledIndex = (ledIndex+1) & 0x07;
+                		wdt_reset();
                         ws2812_setleds(&led[ledIndex], 1);
+		                wdt_reset();
                     }
 			    }
 		    }
-            else {
+            else if (btnState) {
                 timeout = global_timer - timer_start;
                 if (timeout == 10) {
                     //memcpy_P(&p, &passwords[ledIndex], sizeof(PGM_P));
@@ -298,39 +297,31 @@ int main(void)
                 }
             }
         }
-        else
-            timer_start = global_timer;
+        //else
+        //    timer_start = global_timer;
 		lastState = btnState;
-
-		/*if ( !(PINB & _BV(PB3)) ) {
-			if (state == STATE_WAIT && button_release_counter == 255)
-				state = STATE_SEND_KEY;
-
-			button_release_counter = 0;
-		}
-
-		if (button_release_counter < 255)
-			button_release_counter ++;*/
 
 		if (usbInterruptIsReady() && state != STATE_WAIT) {
 			switch (state) {
 				case STATE_SEND_KEY:
-					buildReport(*bufPtr++);
-					//state = STATE_RELEASE_KEY;
-                    state = STATE_SEND_NEXT;
-					break;
-
-                case STATE_SEND_NEXT:
-                    buildReport(0);
-                    if (*bufPtr == 0)
-                        state = STATE_WAIT;
+                    if (bufPtr != NULL) {
+    					buildReport(*bufPtr);
+    					state = STATE_RELEASE_KEY;
+                    }
                     else
-                        state = STATE_SEND_KEY;
-                    break;
+                        state = STATE_WAIT;
+					break;
 
 				case STATE_RELEASE_KEY:
 					buildReport(0);
 					state = STATE_WAIT;
+                    if (bufPtr != NULL) {
+                        bufPtr ++;
+                        if (*bufPtr != 0)
+                            state = STATE_SEND_KEY;
+                        else
+                            bufPtr = NULL;
+                    }
 					break;
 
 				default:
