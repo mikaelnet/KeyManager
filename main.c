@@ -3,7 +3,7 @@
  *
  * Created: 2016-07-28 23:23:35
  * Author : mikael
- */ 
+ */
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -11,6 +11,7 @@
 #include <avr/eeprom.h>
 #include <util/delay.h>
 #include <avr/pgmspace.h>
+#include <stdlib.h>
 
 extern void hasUsbReset();
 
@@ -23,14 +24,20 @@ extern void hasUsbReset();
 #define PASS_LENGTH 10 // password length for generated password
 #define SEND_ENTER 0 // define to 1 if you want to send ENTER after password
 
-const PROGMEM uchar measuring_message[] = "Starting generation...";
-const PROGMEM uchar finish_message[] = " New password saved.";
-
 // The buffer needs to accommodate the messages above and the password
 #define MSG_BUFFER_SIZE 32
+EEMEM uchar stored_passwords[MSG_BUFFER_SIZE * 7];
 
-EEMEM uchar stored_password[MSG_BUFFER_SIZE];
+/*EEMEM uchar stored_passwords[7][MSG_BUFFER_SIZE] = {
+    { "012345678901234567890123456789\n" },
+    { "abcdefghijklmnopqrstuvwxyz1234\n" },
+    { "ABCDEFGHIJKLMNOPQRSTUVWXYZ5678\n" },
 
+    { "abcde01234ABCDE56789abcdefghij\n" },
+    { "aabbccddeeffgghhiijjkkllmmnnoo\n" },
+    { "AABBCCDDEEFFGGHHIIJJKKLLMMNNOO\n" },
+    { "12345_12345-12345_12345-12345_\n" },
+};*/
 
 // ************************
 // *** USB HID ROUTINES ***
@@ -90,15 +97,9 @@ static uchar idleRate; // repeat rate for keyboards
 #define STATE_SEND 1
 #define STATE_DONE 0
 
-static uchar messageState = STATE_DONE;
-static uchar messageBuffer[MSG_BUFFER_SIZE] = "";
-static uchar messagePtr = 0;
-static uchar messageCharNext = 1;
-
 #define MOD_SHIFT_LEFT (1<<1)
 
-
-usbMsgLen_t usbFunctionSetup(uchar data[8]) 
+usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
 	usbRequest_t *rq = (void *)data;
 
@@ -106,7 +107,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 		switch(rq->bRequest) {
 			case USBRQ_HID_GET_REPORT:
 				// send "no keys pressed" if asked here
-				usbMsgPtr = (void *)&keyboard_report;
+				usbMsgPtr = (usbMsgPtr_t)&keyboard_report;  //was cast to void*
 				keyboard_report.modifier = 0;
 				keyboard_report.keycode[0] = 0;
 				return sizeof(keyboard_report);
@@ -115,7 +116,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 				return (rq->wLength.word == 1) ? USB_NO_MSG : 0;
 
 			case USBRQ_HID_GET_IDLE:
-				usbMsgPtr = &idleRate;
+				usbMsgPtr = (usbMsgPtr_t)&idleRate; //was no cast
 				return 1;
 
 			case USBRQ_HID_SET_IDLE:
@@ -127,7 +128,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 }
 
 #define i_abs(x) ((x) > 0 ? (x) : (-x))
-void hadUsbReset() 
+void hadUsbReset()
 {
 	int frameLength;
 	int targetLength = (unsigned)(1499 * (double)F_CPU / 10.5e6 + 0.5);
@@ -177,7 +178,7 @@ void buildReport(char ch) {
 	else {
 		keyboard_report.modifier = 0;
 		uint8_t keyCode = 0;
-		
+
 		switch (ch) {
 			case '.':
 				keyCode = 0x37; break;
@@ -191,6 +192,8 @@ void buildReport(char ch) {
 				keyCode = 0x2B; break;
 			case '\n':
 				keyCode = 0x28; break;
+            //default:
+                //keyCode = 0x37; break;
 		}
 		keyboard_report.keycode[0] = keyCode;
 	}
@@ -200,7 +203,6 @@ void buildReport(char ch) {
 #define STATE_WAIT 0
 #define STATE_SEND_KEY 1
 #define STATE_RELEASE_KEY 2
-#define STATE_TOGGLE 3
 
 struct cRGB led[8];
 uint8_t ledIndex = 0;
@@ -208,19 +210,69 @@ void setup() {
 	DDRB = _BV(PB1) | _BV(PB4);	// RED LED + WS2812 LED
 	PORTB = _BV(PB1);
 
-	led[0].r = 0x80; led[0].g = 0x00; led[0].b = 0x00;
-	led[1].r = 0x00; led[1].g = 0x80; led[1].b = 0x00;
-	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0x80;
-	led[3].r = 0x80; led[3].g = 0x80; led[3].b = 0x00;
-	led[4].r = 0x80; led[4].g = 0x00; led[4].b = 0x80;
-	led[5].r = 0x00; led[5].g = 0x80; led[5].b = 0x80;
-	led[6].r = 0x80; led[6].g = 0x80; led[6].b = 0x80;
+	led[0].r = 0x0F; led[0].g = 0x00; led[0].b = 0x00;
+	led[1].r = 0x00; led[1].g = 0x1F; led[1].b = 0x00;
+	led[2].r = 0x00; led[2].g = 0x00; led[2].b = 0x0F;
+	led[3].r = 0x0F; led[3].g = 0x0F; led[3].b = 0x00;
+	led[4].r = 0x0F; led[4].g = 0x00; led[4].b = 0x0F;
+	led[5].r = 0x00; led[5].g = 0x0F; led[5].b = 0x0F;
+	led[6].r = 0x0F; led[6].g = 0x0F; led[6].b = 0x0F;
 	led[7].r = 0x00; led[7].g = 0x00; led[7].b = 0x00;
+
+    ws2812_setleds(&led[ledIndex], 1);
+
+    TCCR1 = 0x0F;   // Divide 16.5MHz in 16384 -> 1007 ticks/second
+    TCNT1 = 155;
+    TIMSK |= _BV(TOIE1); // | _BV(TOIE0);
+}
+
+volatile uint16_t global_timer; // Counts upwards once every 0.1s
+ISR(TIMER1_OVF_vect) {
+    global_timer ++;
+    TCNT1 = 155;
+}
+
+char messageBuffer[MSG_BUFFER_SIZE+3];  // 2 extra bytes for newline and null termination
+
+char *generateNewKeys() {
+    PORTB |= _BV(PB1);
+
+    srand(global_timer);
+    for (int i=0 ; i < MSG_BUFFER_SIZE * 7 ; i ++) {
+        uchar ch = rand() % 63;
+        if (ch < 26)
+            ch = 'a' + ch;
+        else if (ch < 52)
+            ch = 'A' + ch - 26;
+        else if (ch < 62)
+            ch = '0' + ch - 52;
+        else if (ch == 62)
+            ch = '-';
+        //else if (ch == 63)
+        //    ch = '_';
+
+        wdt_reset();
+        eeprom_write_byte(&stored_passwords[i], ch);
+    }
+
+    strcpy_P(messageBuffer, PSTR("New keys generated\n"));
+    return messageBuffer;
+}
+
+char *toHex (char *ptr, char ch) {
+    uint8_t nibble = (ch >> 4) & 0x0F;
+    *ptr++ = (nibble < 10 ? '0' : 'A'-10) + nibble;
+    nibble = ch & 0x0F;
+    *ptr++ = (nibble < 10 ? '0' : 'A'-10) + nibble;
+    return ptr;
 }
 
 int main(void)
 {
 	setup();
+
+    //eeprom_write_byte(eeTestChar, 0x5A);
+    //eeprom_write_byte(eeTestChar+1, 0x3D);
 
 	wdt_enable(WDTO_1S);
 	usbInit();
@@ -236,58 +288,98 @@ int main(void)
 	sei();
 
     uint8_t state = STATE_WAIT;
-	uint8_t button_release_counter = 0;
-	
-	uint16_t button_counter = 0;
-	uint8_t lastState = !(PINB & _BV(PB3)), ledState;
-    while (1) 
+
+	uint8_t lastState = !(PINB & _BV(PB3)), btnState;
+	uint8_t timer_start = global_timer, timeout;
+
+    char *bufPtr = NULL;
+
+    while (1)
     {
 		wdt_reset();
 		usbPoll();
 
-		ledState = !(PINB & _BV(PB3));
-		if (ledState != lastState) {
-			if (ledState) {
-				// Button is just pressed
-			}
-			else {
-				// Button is released
-				if (button_counter > 250) {
-					state = STATE_SEND_KEY;
-				}
-				else if (button_counter > 10) {	// De-bounce
-					ledIndex = (ledIndex+1) & 0x07;
-					ws2812_setleds(&led[ledIndex], 1);
-				}
-			}
-			button_counter = 0;
-		}
-		else if (button_counter < 0xFFFF) {
-			button_counter ++;
-		}
+		btnState = !(PINB & _BV(PB3));
+        if (state == STATE_WAIT && bufPtr == NULL) {
+		    if (btnState != lastState) {
+			    if (btnState) {
+				    timer_start = global_timer;
+			    }
+			    else {
+				    // Button is released
+                    timeout = global_timer - timer_start;
+                    if (timeout > 10 && timeout < 50) {
+                        //state = STATE_SEND_KEY;
+                    }
+                    else if (timeout > 1 && timeout <= 10) {
+                        ledIndex = (ledIndex+1) & 0x07;
+                        PORTB &= ~_BV(PB1);  // LED off (if it was turned on by a re-gen
+                		wdt_reset();
+                        ws2812_setleds(&led[ledIndex], 1);
+		                wdt_reset();
+                    }
+			    }
+		    }
+            else if (btnState) {
+                timeout = global_timer - timer_start;
+                if (timeout == 10 && ledIndex != 7) {
+                    //eeprom_read_block(messageBuffer, stored_passwords[ledIndex], MSG_BUFFER_SIZE);
+                    char *ptr = messageBuffer;
+                    *ptr ++ = '0'+ledIndex;
+                    for (int idx = 0 ; idx < MSG_BUFFER_SIZE ; idx ++) {
+                        char eeChar = eeprom_read_byte((uint8_t *)&stored_passwords[ledIndex * MSG_BUFFER_SIZE + idx]);
+                        //ptr = toHex(ptr, eeChar);
+                        *ptr++ = eeChar;
+                    }
+                    *ptr ++ = '\n';
+                    *ptr = 0;
 
-		lastState = state;
-
-		/*if ( !(PINB & _BV(PB3)) ) {
-			if (state == STATE_WAIT && button_release_counter == 255)
-				state = STATE_SEND_KEY;
-
-			button_release_counter = 0;
-		}
-
-		if (button_release_counter < 255)
-			button_release_counter ++;*/
+                    wdt_reset();
+                    bufPtr = messageBuffer;
+                    state = STATE_SEND_KEY;
+                }
+                else if (timeout == 50 && ledIndex == 7) {
+                    bufPtr = generateNewKeys();
+                    if (bufPtr != NULL)
+                        state = STATE_SEND_KEY;
+                }
+            }
+        }
+        else
+            timer_start = global_timer;
+		lastState = btnState;
 
 		if (usbInterruptIsReady() && state != STATE_WAIT) {
 			switch (state) {
 				case STATE_SEND_KEY:
-					buildReport('A' + ledIndex);
-					state = STATE_RELEASE_KEY;
+                    if (bufPtr != NULL) {
+    					buildReport(*bufPtr);
+
+                        bufPtr ++;
+                        if (*bufPtr != 0) {
+                            state = STATE_SEND_KEY;
+                        }
+                        else {
+                            state = STATE_RELEASE_KEY;
+                            bufPtr = NULL;
+                        }
+
+    					//state = STATE_RELEASE_KEY;
+                    }
+                    else
+                        state = STATE_WAIT;
 					break;
 
 				case STATE_RELEASE_KEY:
 					buildReport(0);
 					state = STATE_WAIT;
+                    if (bufPtr != NULL) {
+                        bufPtr ++;
+                        if (*bufPtr != 0)
+                            state = STATE_SEND_KEY;
+                        else
+                            bufPtr = NULL;
+                    }
 					break;
 
 				default:
